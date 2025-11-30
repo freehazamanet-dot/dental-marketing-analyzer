@@ -1,0 +1,620 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// 認証・組織関連
+// ============================================
+
+/// 組織（会社・チーム）
+model Organization {
+  id        String    @id @default(cuid())
+  name      String /// 組織名
+  plan      String    @default("standard") /// 契約プラン
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime? /// 論理削除
+
+  users         User[]
+  dentalClinics DentalClinic[]
+
+  @@map("organizations")
+}
+
+/// ユーザー（営業担当者）
+model User {
+  id             String    @id @default(cuid())
+  email          String    @unique
+  emailVerified  DateTime?
+  hashedPassword String?
+  name           String?
+  image          String?
+  role           UserRole  @default(SALES)
+  organizationId String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+  deletedAt      DateTime? /// 論理削除
+
+  organization    Organization?    @relation(fields: [organizationId], references: [id])
+  accounts        Account[]
+  sessions        Session[]
+  dentalClinics   DentalClinic[]   @relation("AssignedClinics")
+  analysisResults AnalysisResult[]
+
+  @@map("users")
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+enum UserRole {
+  SYSTEM_ADMIN /// システム管理者
+  ORG_ADMIN /// 組織管理者
+  SALES /// 営業担当者
+}
+
+// ============================================
+// 歯科医院関連
+// ============================================
+
+/// 歯科医院
+model DentalClinic {
+  id             String   @id @default(cuid())
+  organizationId String
+  assignedUserId String? /// 担当営業
+
+  // 基本情報
+  name        String /// 医院名
+  postalCode  String? /// 郵便番号
+  prefecture  String /// 都道府県
+  city        String /// 市区町村
+  address     String? /// 住所詳細
+  phoneNumber String? /// 電話番号
+  websiteUrl  String? /// ホームページURL
+
+  // Google連携情報
+  googlePlaceId     String?   @unique /// Google Place ID
+  gaPropertyId      String? /// Google Analytics プロパティID
+  gscSiteUrl        String? /// Search Console サイトURL
+  googleOAuthToken  Json? /// OAuth トークン（暗号化保存）
+  googleTokenExpiry DateTime? /// トークン有効期限
+
+  // 診療情報
+  specialties String[] /// 診療科目（矯正、インプラント等）
+
+  // メタ情報
+  status    ClinicStatus @default(ACTIVE)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+  deletedAt DateTime? /// 論理削除
+
+  organization       Organization         @relation(fields: [organizationId], references: [id])
+  assignedUser       User?                @relation("AssignedClinics", fields: [assignedUserId], references: [id])
+  analyticsData      AnalyticsData[]
+  searchConsoleData  SearchConsoleData[]
+  reviewData         ReviewData[]
+  analysisResults    AnalysisResult[]
+  competitors        Competitor[] /// 競合医院
+  monthlyPatientData MonthlyPatientData[] /// 月別患者データ
+  measures           Measure[] /// 施策
+
+  @@map("dental_clinics")
+}
+
+enum ClinicStatus {
+  ACTIVE /// アクティブ
+  INACTIVE /// 非アクティブ
+  PENDING /// 連携待ち
+}
+
+/// 診療科目マスタ
+model SpecialtyMaster {
+  id        String   @id @default(cuid())
+  name      String   @unique /// 科目名（矯正歯科、インプラント等）
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("specialty_masters")
+}
+
+// ============================================
+// 分析データ関連
+// ============================================
+
+/// Google Analytics データ
+model AnalyticsData {
+  id             String @id @default(cuid())
+  dentalClinicId String
+
+  // 集計期間
+  periodStart DateTime /// 集計開始日
+  periodEnd   DateTime /// 集計終了日
+
+  // セッション・ユーザー
+  totalSessions Int /// 総セッション数
+  totalUsers    Int /// 総ユーザー数
+  newUsers      Int /// 新規ユーザー数
+
+  // 滞在時間
+  avgSessionDuration Float /// 平均セッション時間（秒）
+  bounceRate         Float /// 直帰率（%）
+
+  // 地域別データ
+  regionData Json /// { "東京都": 45, "神奈川県": 20, ... }
+  cityData   Json /// { "渋谷区": 30, "新宿区": 15, ... }
+
+  // 流入元別データ
+  channelData Json /// { "organic": 500, "paid": 200, "direct": 100, ... }
+
+  // 広告データ
+  paidSessions    Int? /// 広告経由セッション
+  paidAvgDuration Float? /// 広告経由 平均滞在時間
+  paidBounceRate  Float? /// 広告経由 直帰率
+
+  // メタ情報
+  fetchedAt DateTime @default(now()) /// データ取得日時
+  rawData   Json? /// 生データ（デバッグ用）
+
+  dentalClinic DentalClinic @relation(fields: [dentalClinicId], references: [id])
+
+  @@unique([dentalClinicId, periodStart, periodEnd])
+  @@map("analytics_data")
+}
+
+/// Search Console データ
+model SearchConsoleData {
+  id             String @id @default(cuid())
+  dentalClinicId String
+
+  // 集計期間
+  periodStart DateTime
+  periodEnd   DateTime
+
+  // パフォーマンスデータ
+  totalClicks      Int /// 総クリック数
+  totalImpressions Int /// 総表示回数
+  avgCtr           Float /// 平均CTR（%）
+  avgPosition      Float /// 平均掲載順位
+
+  // クエリ別データ
+  queryData Json /// [{ "query": "渋谷 歯医者", "clicks": 50, ... }, ...]
+
+  // ページ別データ
+  pageData Json /// [{ "page": "/services", "clicks": 30, ... }, ...]
+
+  // メタ情報
+  fetchedAt DateTime @default(now())
+  rawData   Json?
+
+  dentalClinic DentalClinic @relation(fields: [dentalClinicId], references: [id])
+
+  @@unique([dentalClinicId, periodStart, periodEnd])
+  @@map("search_console_data")
+}
+
+/// Google 口コミデータ
+model ReviewData {
+  id             String @id @default(cuid())
+  dentalClinicId String
+
+  // 口コミサマリー
+  totalReviews  Int /// 口コミ総数
+  averageRating Float /// 平均評価（1.0-5.0）
+
+  // 評価分布
+  rating5Count Int /// ★5の数
+  rating4Count Int /// ★4の数
+  rating3Count Int /// ★3の数
+  rating2Count Int /// ★2の数
+  rating1Count Int /// ★1の数
+
+  // 最新口コミ
+  latestReviews Json? /// [{ "author": "...", "rating": 5, "text": "...", "time": "..." }, ...]
+
+  // メタ情報
+  fetchedAt DateTime @default(now())
+  rawData   Json?
+
+  dentalClinic DentalClinic @relation(fields: [dentalClinicId], references: [id])
+
+  @@map("review_data")
+}
+
+// ============================================
+// 競合医院関連
+// ============================================
+
+/// 競合医院
+model Competitor {
+  id             String @id @default(cuid())
+  dentalClinicId String /// 親医院（自院）
+
+  // 基本情報
+  name          String /// 競合医院名
+  googlePlaceId String /// Google Place ID
+  prefecture    String /// 都道府県
+  city          String /// 市区町村
+  address       String? /// 住所詳細
+
+  // 距離情報
+  distanceMeters Int? /// 自院からの距離（メートル）
+
+  // 診療情報
+  specialties String[] /// 診療科目
+
+  // メタ情報
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dentalClinic DentalClinic           @relation(fields: [dentalClinicId], references: [id])
+  reviewData   CompetitorReviewData[]
+
+  @@unique([dentalClinicId, googlePlaceId])
+  @@map("competitors")
+}
+
+/// 競合医院口コミデータ
+model CompetitorReviewData {
+  id           String @id @default(cuid())
+  competitorId String
+
+  // 口コミサマリー
+  totalReviews  Int /// 口コミ総数
+  averageRating Float /// 平均評価（1.0-5.0）
+
+  // 評価分布
+  rating5Count Int /// ★5の数
+  rating4Count Int /// ★4の数
+  rating3Count Int /// ★3の数
+  rating2Count Int /// ★2の数
+  rating1Count Int /// ★1の数
+
+  // メタ情報
+  fetchedAt DateTime @default(now())
+  rawData   Json?
+
+  competitor Competitor @relation(fields: [competitorId], references: [id])
+
+  @@map("competitor_review_data")
+}
+
+// ============================================
+// 新規患者データ関連
+// ============================================
+
+/// 主訴マスタ
+model ChiefComplaintMaster {
+  id          String  @id @default(cuid())
+  name        String  @unique /// 主訴名（虫歯治療、矯正歯科等）
+  icon        String? /// アイコン絵文字
+  description String? /// 説明
+  sortOrder   Int     @default(0)
+  isActive    Boolean @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  patientsByComplaint PatientByComplaint[]
+
+  @@map("chief_complaint_masters")
+}
+
+/// 月別患者データ
+model MonthlyPatientData {
+  id             String @id @default(cuid())
+  dentalClinicId String
+
+  // 対象年月
+  year  Int /// 年（2024等）
+  month Int /// 月（1-12）
+
+  // 合計
+  totalNewPatients Int /// 新規患者合計
+
+  // メモ
+  memo String? @db.Text /// 特記事項
+
+  // メタ情報
+  inputById String? /// 入力者
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  dentalClinic        DentalClinic         @relation(fields: [dentalClinicId], references: [id])
+  patientsByComplaint PatientByComplaint[]
+
+  @@unique([dentalClinicId, year, month])
+  @@map("monthly_patient_data")
+}
+
+/// 主訴別患者数
+model PatientByComplaint {
+  id                   String @id @default(cuid())
+  monthlyPatientDataId String
+  chiefComplaintId     String
+
+  patientCount Int /// 患者数
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  monthlyPatientData MonthlyPatientData   @relation(fields: [monthlyPatientDataId], references: [id], onDelete: Cascade)
+  chiefComplaint     ChiefComplaintMaster @relation(fields: [chiefComplaintId], references: [id])
+
+  @@unique([monthlyPatientDataId, chiefComplaintId])
+  @@map("patients_by_complaint")
+}
+
+// ============================================
+// 施策管理・効果測定関連
+// ============================================
+
+/// 施策
+model Measure {
+  id             String @id @default(cuid())
+  dentalClinicId String
+
+  // 基本情報
+  name        String /// 施策名
+  category    MeasureCategory /// 施策カテゴリ
+  description String? @db.Text /// 施策詳細
+
+  // 期間
+  startDate DateTime /// 開始日
+  endDate   DateTime? /// 終了日（null=継続中）
+
+  // 費用
+  cost     Int? /// 費用（円）
+  costType CostType @default(ONE_TIME) /// 費用タイプ
+
+  // ターゲット
+  targetComplaint String[] /// 対象主訴（矯正、ホワイトニング等）
+  targetArea      String? /// 対象エリア
+  targetAudience  String? /// ターゲット層（20-30代女性等）
+
+  // メタ情報
+  status      MeasureStatus @default(ACTIVE)
+  createdById String? /// 登録者
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  dentalClinic DentalClinic    @relation(fields: [dentalClinicId], references: [id])
+  effects      MeasureEffect[]
+
+  @@map("measures")
+}
+
+enum MeasureCategory {
+  LISTING_AD /// リスティング広告
+  SNS_AD /// SNS広告
+  SEO /// SEO対策
+  MEO /// MEO対策
+  POSTING /// ポスティング
+  REFERRAL /// 紹介施策
+  REVIEW_CAMPAIGN /// 口コミキャンペーン
+  HP_RENEWAL /// HP改善
+  OTHER /// その他
+}
+
+enum CostType {
+  ONE_TIME /// 一回払い
+  MONTHLY /// 月額
+}
+
+enum MeasureStatus {
+  PLANNED /// 予定
+  ACTIVE /// 実施中
+  COMPLETED /// 完了
+  CANCELLED /// 中止
+}
+
+/// 施策効果測定
+model MeasureEffect {
+  id        String @id @default(cuid())
+  measureId String
+
+  // 測定期間
+  periodType EffectPeriodType /// 測定期間タイプ
+
+  // 施策前データ（1ヶ月分）
+  beforePeriodStart DateTime /// 施策前期間（開始）
+  beforePeriodEnd   DateTime /// 施策前期間（終了）
+  beforeSessions    Int? /// 施策前 セッション数
+  beforeNewPatients Int? /// 施策前 新規患者数
+  beforeReviews     Int? /// 施策前 口コミ数
+  beforeAvgDuration Float? /// 施策前 平均滞在時間
+
+  // 施策後データ（1ヶ月分）
+  afterPeriodStart  DateTime /// 施策後期間（開始）
+  afterPeriodEnd    DateTime /// 施策後期間（終了）
+  afterSessions     Int? /// 施策後 セッション数
+  afterNewPatients  Int? /// 施策後 新規患者数
+  afterReviews      Int? /// 施策後 口コミ数
+  afterAvgDuration  Float? /// 施策後 平均滞在時間
+
+  // 主訴別効果（JSON）
+  complaintEffects Json? /// [{ "complaint": "矯正", "before": 5, "after": 12 }, ...]
+
+  // ROI計算
+  estimatedRevenue   Int? /// 推定売上増加額
+  roi                Float? /// ROI（%）
+  costPerAcquisition Float? /// 1患者獲得単価
+
+  // AI分析結果
+  aiAnalysis   String?   @db.Text /// AI効果分析テキスト
+  aiAnalyzedAt DateTime? /// AI分析実行日時
+
+  // メタ情報
+  analyzedAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  measure Measure @relation(fields: [measureId], references: [id])
+
+  @@map("measure_effects")
+}
+
+enum EffectPeriodType {
+  ONE_MONTH /// 1ヶ月後
+  THREE_MONTH /// 3ヶ月後
+  SIX_MONTH /// 6ヶ月後
+}
+
+// ============================================
+// 分析結果・提案関連
+// ============================================
+
+/// 分析結果
+model AnalysisResult {
+  id             String @id @default(cuid())
+  dentalClinicId String
+  analyzedById   String /// 分析実行者
+
+  // 分析日時・期間
+  analyzedAt  DateTime @default(now())
+  periodStart DateTime /// 分析対象期間（開始）
+  periodEnd   DateTime /// 分析対象期間（終了）
+
+  // 各種スコア・指標
+  trafficScore      Int? /// 流入スコア（0-100）
+  localTrafficRate  Float? /// 地域流入率（%）
+  engagementScore   Int? /// エンゲージメントスコア（0-100）
+  reviewScore       Int? /// 口コミスコア（0-100）
+  adEfficiencyScore Int? /// 広告効率スコア（0-100）
+  overallScore      Int? /// 総合スコア（0-100）
+
+  // 検出された課題
+  issues Json /// [{ "type": "LOW_TRAFFIC", "severity": "HIGH", "message": "..." }, ...]
+
+  // AI分析結果
+  aiAnalysis   String?   @db.Text /// Gemini による総合分析テキスト
+  aiAnalyzedAt DateTime? /// AI分析実行日時
+
+  // メタ情報
+  status    AnalysisStatus @default(COMPLETED)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+
+  dentalClinic     DentalClinic      @relation(fields: [dentalClinicId], references: [id])
+  analyzedBy       User              @relation(fields: [analyzedById], references: [id])
+  proposedServices ProposedService[]
+
+  @@map("analysis_results")
+}
+
+enum AnalysisStatus {
+  PENDING /// 処理中
+  COMPLETED /// 完了
+  FAILED /// 失敗
+}
+
+/// 提案サービス（中間テーブル）
+model ProposedService {
+  id               String @id @default(cuid())
+  analysisResultId String
+  serviceMasterId  String
+
+  priority   Int      @default(0) /// 優先度（高いほど優先）
+  reason     String? /// 提案理由
+  isAccepted Boolean? /// 顧客が受諾したか
+
+  createdAt DateTime @default(now())
+
+  analysisResult AnalysisResult @relation(fields: [analysisResultId], references: [id])
+  serviceMaster  ServiceMaster  @relation(fields: [serviceMasterId], references: [id])
+
+  @@unique([analysisResultId, serviceMasterId])
+  @@map("proposed_services")
+}
+
+// ============================================
+// マスタデータ
+// ============================================
+
+/// 提案サービスマスタ
+model ServiceMaster {
+  id          String  @id @default(cuid())
+  name        String /// サービス名
+  category    String /// カテゴリ（広告/SEO/その他）
+  description String? @db.Text /// サービス説明
+  price       String? /// 価格帯
+
+  // 提案条件
+  triggerConditions Json? /// 自動提案の条件 [{ "type": "LOW_TRAFFIC", "threshold": 500 }, ...]
+
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  proposedServices ProposedService[]
+
+  @@map("service_masters")
+}
+
+/// 分析ルールマスタ
+model AnalysisRuleMaster {
+  id       String @id @default(cuid())
+  name     String /// ルール名
+  ruleType String /// ルールタイプ
+
+  // 条件定義
+  conditions Json /// { "metric": "totalSessions", "operator": "<", "value": 500 }
+
+  // 出力定義
+  issueType String /// 課題タイプ
+  severity  String /// 重要度（HIGH/MEDIUM/LOW）
+  message   String /// 課題メッセージテンプレート
+
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("analysis_rule_masters")
+}
