@@ -22,6 +22,7 @@ import {
   RefreshCw,
   LineChart,
   Search,
+  Trash2,
 } from "lucide-react";
 
 interface ClinicDetail {
@@ -86,6 +87,8 @@ export default function ClinicDetailPage({
   const [clinic, setClinic] = useState<ClinicDetail | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -143,6 +146,32 @@ export default function ClinicDetailPage({
     }
   };
 
+  // 削除処理
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/clinics/${resolvedParams.id}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        throw new Error(data.error || "削除に失敗しました");
+      }
+
+      // 一覧ページにリダイレクト
+      router.push("/clinics");
+    } catch (err) {
+      console.error("Delete error:", err);
+      setError(err instanceof Error ? err.message : "削除に失敗しました");
+      setShowDeleteConfirm(false);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
@@ -169,7 +198,43 @@ export default function ClinicDetailPage({
   const latestPatientData = clinic.monthlyPatientData[0];
 
   return (
-    <div className="space-y-6">
+    <>
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4 shadow-xl">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-red-100 rounded-full">
+                <Trash2 className="h-6 w-6 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-slate-900">医院を削除</h3>
+            </div>
+            <p className="text-slate-600 mb-6">
+              <span className="font-medium text-slate-900">{clinic.name}</span> を削除しますか？
+              <br />
+              <span className="text-sm text-slate-500">この操作は取り消せません。関連するすべてのデータも削除されます。</span>
+            </p>
+            <div className="flex justify-end gap-3">
+              <Button
+                variant="outline"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+              >
+                キャンセル
+              </Button>
+              <Button
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="bg-red-600 hover:bg-red-700 text-white"
+              >
+                {isDeleting ? "削除中..." : "削除する"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div className="flex items-center gap-4">
@@ -203,6 +268,14 @@ export default function ClinicDetailPage({
               編集
             </Button>
           </Link>
+          <Button 
+            variant="outline" 
+            onClick={() => setShowDeleteConfirm(true)}
+            className="text-red-600 hover:text-red-700 hover:bg-red-50 border-red-200"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            削除
+          </Button>
         </div>
       </div>
 
@@ -509,7 +582,8 @@ export default function ClinicDetailPage({
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
