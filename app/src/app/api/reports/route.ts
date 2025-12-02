@@ -1,9 +1,9 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/auth";
 import { prisma } from "@/lib/prisma";
 
 // GET /api/reports - 全分析レポート一覧
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const session = await auth();
 
@@ -11,15 +11,20 @@ export async function GET() {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
+    const { searchParams } = new URL(request.url);
+    const clinicId = searchParams.get("clinicId");
+    const limit = parseInt(searchParams.get("limit") || "50");
+
     const reports = await prisma.analysisResult.findMany({
       where: {
         dentalClinic: {
           organizationId: session.user.organizationId,
           deletedAt: null,
+          ...(clinicId ? { id: clinicId } : {}),
         },
       },
       orderBy: { analyzedAt: "desc" },
-      take: 50,
+      take: limit,
       include: {
         dentalClinic: {
           select: {
@@ -27,6 +32,11 @@ export async function GET() {
             name: true,
             prefecture: true,
             city: true,
+          },
+        },
+        analyzedBy: {
+          select: {
+            name: true,
           },
         },
       },
@@ -37,8 +47,13 @@ export async function GET() {
         id: r.id,
         clinic: r.dentalClinic,
         analyzedAt: r.analyzedAt,
+        analyzedBy: r.analyzedBy?.name || "不明",
         overallScore: r.overallScore,
+        trafficScore: r.trafficScore,
+        engagementScore: r.engagementScore,
+        reviewScore: r.reviewScore,
         status: r.status,
+        issueCount: Array.isArray(r.issues) ? r.issues.length : 0,
       }))
     );
   } catch (error) {

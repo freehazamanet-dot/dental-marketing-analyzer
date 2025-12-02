@@ -18,7 +18,9 @@ import {
   DollarSign,
   ArrowRight,
   Zap,
+  Download,
 } from "lucide-react";
+import { PDFDownloadButton } from "@/components/pdf/PDFDownloadButton";
 
 interface AnalysisResult {
   id: string;
@@ -68,6 +70,7 @@ export default function AnalysisPage({
   const [error, setError] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
   const [parsedAI, setParsedAI] = useState<AIAnalysisResult | null>(null);
+  const [clinicName, setClinicName] = useState<string>("");
 
   useEffect(() => {
     fetchLatestAnalysis();
@@ -79,6 +82,10 @@ export default function AnalysisPage({
       const response = await fetch(`/api/clinics/${resolvedParams.id}`);
       if (response.ok) {
         const data = await response.json();
+        // 医院名を設定
+        if (data.name) {
+          setClinicName(data.name);
+        }
         if (data.analysisResults && data.analysisResults.length > 0) {
           const latest = data.analysisResults[0];
           setAnalysisResult(latest);
@@ -211,19 +218,28 @@ export default function AnalysisPage({
             </p>
           </div>
         </div>
-        <Button onClick={runAnalysis} isLoading={isAnalyzing}>
-          {analysisResult ? (
-            <>
-              <RefreshCw className="h-4 w-4 mr-2" />
-              再分析
-            </>
-          ) : (
-            <>
-              <Play className="h-4 w-4 mr-2" />
-              分析を実行
-            </>
+        <div className="flex items-center gap-2">
+          {analysisResult && clinicName && (
+            <PDFDownloadButton
+              clinicId={resolvedParams.id}
+              analysisId={analysisResult.id}
+              clinicName={clinicName}
+            />
           )}
-        </Button>
+          <Button onClick={runAnalysis} isLoading={isAnalyzing}>
+            {analysisResult ? (
+              <>
+                <RefreshCw className="h-4 w-4 mr-2" />
+                再分析
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4 mr-2" />
+                分析を実行
+              </>
+            )}
+          </Button>
+        </div>
       </div>
 
       {error && (
